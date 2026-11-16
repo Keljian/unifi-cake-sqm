@@ -9,8 +9,8 @@
 #     1. reads the upload rate UniFi configured,
 #     2. replaces that upload shaper with CAKE at the same rate.
 #   If CAKE is already in place it changes nothing.
-#   Download is left alone: UniFi keeps shaping it with HTB + fq_codel
-#   on the ifb device.
+#   Download is handled separately by cake-download.sh. Without it, UniFi
+#   keeps shaping download with HTB + fq_codel on the ifb device.
 #
 # Fail-safe: if this script stops, UniFi's stock Smart Queues comes back
 # the next time UniFi applies its settings (or at the next reboot).
@@ -18,8 +18,14 @@
 # Logs: journalctl -t cake-upload   (only written when something changes)
 
 WAN_IF="eth4"                 # WAN port to shape (check with: ip -br addr)
-CAKE_OPTS="nat ethernet"      # nat      = per-device fairness behind NAT
-                              # ethernet = Ethernet frame overhead accounting
+CAKE_OPTS="nat ethernet diffserv4 memlimit 64mb"
+                              # nat           = per-device fairness behind NAT
+                              # ethernet      = Ethernet frame overhead accounting
+                              # diffserv4     = four priority tins from DSCP:
+                              #                 Bulk, Best Effort, Video, Voice
+                              # memlimit 64mb = queue memory cap (CAKE's default
+                              #                 at 50 Mbit is 4 MB). A ceiling,
+                              #                 not memory set aside.
                               # Optional: append ack-filter to thin redundant TCP
                               # ACKs on upload. Untested here, see the README first.
 CHECK_EVERY=60                # seconds between checks
