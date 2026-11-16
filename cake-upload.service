@@ -1,0 +1,12 @@
+[Unit]
+Description=CAKE upload shaping for WAN1 (rate read from UniFi Smart Queues)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /data/cake-upload/cake-upload.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
