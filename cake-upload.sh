@@ -20,6 +20,8 @@
 WAN_IF="eth4"                 # WAN port to shape (check with: ip -br addr)
 CAKE_OPTS="nat ethernet"      # nat      = per-device fairness behind NAT
                               # ethernet = Ethernet frame overhead accounting
+                              # Optional: append ack-filter to thin redundant TCP
+                              # ACKs on upload. Untested here, see the README first.
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-upload "$*"; }

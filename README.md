@@ -117,6 +117,8 @@ cat << 'EOF' > /data/cake-upload/cake-upload.sh
 WAN_IF="eth4"                 # WAN port to shape (check with: ip -br addr)
 CAKE_OPTS="nat ethernet"      # nat      = per-device fairness behind NAT
                               # ethernet = Ethernet frame overhead accounting
+                              # Optional: append ack-filter to thin redundant TCP
+                              # ACKs on upload. Untested here, see the README first.
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-upload "$*"; }
@@ -245,6 +247,22 @@ These had not been done when this was written:
 - [ ] Check behaviour across a WAN failover event.
 - [ ] Check the service after the next firmware update.
 
+### Optional: ack-filter
+
+CAKE has an option, `ack-filter`, that thins redundant TCP ACKs queued on the upload. It is off in this setup and untested here.
+
+It is meant for links with very asymmetric rates. The authors of the CAKE patch do not recommend turning it on everywhere, because on more symmetrical links the effect is negligible at best. In their test on a 30/1 Mbps link it raised downstream throughput by about 20% (upstream by about 12% in the conservative mode) at the cost of about 5 ms of inter-flow latency ([patch notes](https://lore.kernel.org/all/20180522202241.GJ5488@localhost.localdomain/T/)). A 500/50 line is a much milder ratio, so a smaller gain is the likely outcome. That is an inference, nothing here measures it.
+
+It has general drawbacks too. Filtering ACKs can interfere with ACK clocking, especially in slow start. In the conservative mode, which plain `ack-filter` selects, CAKE keeps at least two redundant ACKs in the queue and only filters redundant ones.
+
+To try it, add the word to `CAKE_OPTS`, restart the service, then re-apply the upload figure in the GUI so UniFi rebuilds its shaper and the script converts it with the new options:
+
+```bash
+sed -i 's/^CAKE_OPTS="nat ethernet"/CAKE_OPTS="nat ethernet ack-filter"/' /data/cake-upload/cake-upload.sh
+systemctl restart cake-upload
+```
+
+The CAKE line in `tc qdisc show dev eth4` then shows `ack-filter` where it showed `no-ack-filter`. To compare, run a large download while something else saturates the upload, with the option on and off, and watch download speed and latency. To undo it, reverse the `sed` and re-apply the GUI figure again.
 ## Persistence, firmware updates and uninstall
 
 The service is enabled in systemd, so it should start at every boot and convert the shaper UniFi builds. Neither a reboot nor a firmware update had been tested on this unit at the time of writing.
@@ -389,6 +407,7 @@ This was needed once during setup, after an early version of the script had remo
 - [bufferbloat-lab, chapter 3: bufferbloat on UniFi](https://github.com/filip-lebiecki/bufferbloat-lab/blob/main/docs/03-unifi.md). WAN interface names, PPPoE, persistence claims. No test date or firmware version given.
 - [udm-kernel-tools issue 21](https://github.com/fabianishere/udm-kernel-tools/issues/21). CAKE module loading but `tc` refusing it on a UDM Pro, 2021.
 - [udm-kernel releases](https://github.com/fabianishere/udm-kernel/releases). UDM Pro kernel versions by firmware.
+- [CAKE ACK filter patch notes](https://lore.kernel.org/all/20180522202241.GJ5488@localhost.localdomain/T/), Linux kernel mailing list. The ack-filter test results and recommendation.
 - [Removing download smart queue on UniFi UDM Pro](https://www.ataraxia.fyi/home/removing-smart-queue-on-unifi), ataraxia.fyi. UDM Pro interface name and throughput report.
 
 Everything in the UCG Ultra sections comes from commands run on the tested unit between 12 and 16 November 2026.
