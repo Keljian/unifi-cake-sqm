@@ -233,9 +233,6 @@ cat << 'EOF' > /data/cake-download/cake-download.sh
 # Optional, off by default: put one WireGuard client tunnel into CAKE's
 # Bulk tin, so bulk downloads through it give way to everything else.
 # Set WG_IF to the tunnel's interface name (wg show) to turn it on.
-# It also turns on RPS for the tunnel, so decrypted traffic is spread over
-# CPUs 1-3 instead of staying on the core that decrypted it. The tunnel
-# resets RPS whenever it is recreated, so the script re-applies it.
 #   - A mangle rule marks the tunnel's own UDP connection in conntrack.
 #   - UniFi's ingress hook restores that connmark onto each download
 #     packet before redirecting it to the ifb device.
@@ -253,10 +250,8 @@ cat << 'EOF' > /data/cake-download/cake-download.sh
 
 WAN_IF="eth4"                 # WAN port (check with: ip -br addr)
 IFB_IF="ifb${WAN_IF}"         # device UniFi redirects download traffic to
-WG_IF=""                      # optional WireGuard client tunnel for Bulk
-                              # and RPS, e.g. "wgclt2". Empty = feature off.
-WG_RPS=e                      # RPS CPU mask for the tunnel (CPUs 1-3, the
-                              # same mask UniFi uses on its own interfaces)
+WG_IF=""                      # optional WireGuard client tunnel for Bulk,
+                              # e.g. "wgclt2". Empty = feature off.
 BULK_TIN=1                    # fwmark tin number for that tunnel (1 = Bulk)
 TIN_MASK=0x7fff               # mark bits CAKE reads as the tin number
 CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 128mb"
@@ -319,19 +314,8 @@ ensure_bulk_mark() {
     fi
 }
 
-# Spread the tunnel's decrypted traffic across cores.
-ensure_wg_rps() {
-    [ -n "$WG_IF" ] || return 0                  # feature off
-    local f=/sys/class/net/$WG_IF/queues/rx-0/rps_cpus
-    [ -w "$f" ] || return 0                      # tunnel down
-    if [ "$(cat "$f")" != "$WG_RPS" ]; then
-        echo "$WG_RPS" > "$f" && log "RPS on $WG_IF set to $WG_RPS"
-    fi
-}
-
 while true; do
     ensure_bulk_mark
-    ensure_wg_rps
     case "$(root_kind)" in
         htb)  convert_download ;;   # UniFi just (re)applied its shaper
         cake) : ;;                  # already converted, nothing to do
@@ -468,7 +452,7 @@ How much more CAKE costs than fq_codel varies by report:
 - On a Raspberry Pi 4, one user found nearly identical results with CAKE and fq_codel ([OpenWrt forum](https://forum.openwrt.org/t/terrible-results-using-rpi4-sqm-to-control-buffer-bloat-anyone-else-with-this-setup-comment/104903?page=3)).
 - The OpenWrt SQM docs note fq_codel giving about 15% higher throughput when CPU-limited ([OpenWrt docs](https://openwrt.org/docs/guide-user/network/traffic-shaping/sqm)).
 - On a dual Cortex-A53 router, one user saw around 400 to 450 Mbit/s with CAKE against close to 600 with fq_codel ([OpenWrt forum](https://forum.openwrt.org/t/cerowrt-ii-would-anyone-care/110554/64)).
-- The closest match, a quad Cortex-A53 IPQ8072A at 1.4 GHz, reached about 650 Mbit/s with CAKE after CPU affinity tuning and about 375 Mbit/s on stock settings ([OpenWrt forum](https://forum.openwrt.org/t/dynalink-dl-wrx36-askey-rt5010w-ipq8072a-technical-discussion/110454/2712)). The UCG Ultra's IPQ5322 is a quad Cortex-A53 at 1.5 GHz, and UniFi already spreads interrupts and RPS across cores.
+- The closest match, a quad Cortex-A53 IPQ8072A at 1.4 GHz, reached about 650 Mbit/s with CAKE after CPU affinity tuning and about 375 Mbit/s on stock settings ([OpenWrt forum](https://forum.openwrt.org/t/dynalink-dl-wrx36-askey-rt5010w-ipq8072a-technical-discussion/110454/2712)). The UCG Ultra's IPQ5322 is a quad Cortex-A53 at 1.5 GHz, and UniFi already spreads interrupts across cores.
 
 Applying those ratios to the busiest core gives anywhere from about 74% to about 99% at 570 Mbit. Those are extrapolations from other hardware, not measurements on this unit. `no-split-gso` is there to pull the figure toward the low end. If CAKE runs short of CPU, it shapes worse rather than failing outright: latency rises under load and throughput drops. Measure before trusting it, and uninstall the download half if the busiest core sits near 100%.
 
