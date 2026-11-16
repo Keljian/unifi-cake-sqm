@@ -20,14 +20,7 @@ Download shaping is the expensive direction. [Ubiquiti's own guidance](https://h
 
 UniFi keeps building its normal Smart Queues shapers, and a script swaps the upload one for CAKE at the same rate. The GUI stays the source of truth because the script reads the rate from the shaper UniFi just built.
 
-```
-LAN --upload--> [ CAKE at the GUI rate ] --------------------> Internet
-                         (installed by the script)
-
-LAN <-- [ ifbeth4: stock HTB + fq_codel ] <-- [ ingress hook ] <-- Internet
-                                                connmark + redirect
-                         (both built by UniFi Smart Queues, left alone)
-```
+![Traffic paths through the WAN port: upload goes through CAKE, download goes through the ingress hook and ifbeth4](images/traffic-paths.svg)
 
 Upload leaves through CAKE. Download arrives at the ingress hook and is redirected through `ifbeth4`, exactly as stock.
 

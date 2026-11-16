@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-label="CAKE shapes upload, UniFi fq_codel still shapes download" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#8c959f"/>
+    </marker>
+  </defs>
+  <rect width="760" height="300" fill="#ffffff"/>
+  <text x="24" y="30" font-size="15" font-weight="600" fill="#1f2328">CAKE shapes upload, UniFi fq_codel still shapes download</text>
+
+  <rect x="200" y="52" width="360" height="200" rx="8" fill="#f0f2f4" stroke="#8c959f" stroke-width="1"/>
+  <text x="216" y="74" font-weight="600" fill="#1f2328">Gateway WAN port (eth4)</text>
+
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <path d="M128 120H262" marker-end="url(#arrow)"/>
+    <path d="M498 120H632" marker-end="url(#arrow)"/>
+    <path d="M632 208H544" marker-end="url(#arrow)"/>
+    <path d="M392 208H368" marker-end="url(#arrow)"/>
+    <path d="M216 208H128" marker-end="url(#arrow)"/>
+  </g>
+
+  <rect x="24" y="92" width="104" height="144" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="76" y="160" text-anchor="middle" font-weight="600" fill="#1f2328">LAN</text>
+  <text x="76" y="177" text-anchor="middle" font-size="11.5" fill="#59636e">your devices</text>
+
+  <rect x="632" y="92" width="104" height="144" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="684" y="160" text-anchor="middle" font-weight="600" fill="#1f2328">Internet</text>
+  <text x="684" y="177" text-anchor="middle" font-size="11.5" fill="#59636e">your ISP</text>
+
+  <rect x="262" y="92" width="236" height="56" rx="8" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <text x="380" y="116" text-anchor="middle" font-weight="600" fill="#1f2328">CAKE</text>
+  <text x="380" y="133" text-anchor="middle" font-size="11.5" fill="#59636e">upload, at the GUI rate</text>
+
+  <rect x="392" y="180" width="152" height="56" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="468" y="204" text-anchor="middle" font-weight="600" fill="#1f2328">Ingress hook</text>
+  <text x="468" y="221" text-anchor="middle" font-size="11.5" fill="#59636e">connmark + redirect</text>
+
+  <rect x="216" y="180" width="152" height="56" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="292" y="204" text-anchor="middle" font-weight="600" fill="#1f2328">ifbeth4</text>
+  <text x="292" y="221" text-anchor="middle" font-size="11.5" fill="#59636e">stock HTB + fq_codel</text>
+
+  <text x="164" y="112" text-anchor="middle" font-size="11.5" fill="#59636e">upload</text>
+  <text x="596" y="200" text-anchor="middle" font-size="11.5" fill="#59636e">download</text>
+
+  <rect x="24" y="268" width="14" height="14" rx="3" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <text x="46" y="280" font-size="11.5" fill="#59636e">installed by the script</text>
+  <rect x="200" y="268" width="14" height="14" rx="3" fill="#ffffff" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="222" y="280" font-size="11.5" fill="#59636e">built by UniFi Smart Queues</text>
+</svg>
