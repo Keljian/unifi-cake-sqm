@@ -106,6 +106,9 @@ cat << 'EOF' > /data/cake-upload/cake-upload.sh
 #     1. reads the upload rate UniFi configured,
 #     2. replaces that upload shaper with CAKE at the same rate.
 #   If CAKE is already in place it changes nothing.
+#   With fwmark, UniFi's own priority-app mark (0x8004, set by its DPI on
+#   traffic leaving the WAN) puts those apps in CAKE's Voice tin, the same
+#   as on download. Everything else is sorted into tins by DSCP.
 #   Download is handled separately by cake-download.sh. Without it, UniFi
 #   keeps shaping download with HTB + fq_codel on the ifb device.
 #
@@ -125,6 +128,8 @@ CAKE_OPTS="nat ethernet diffserv4 memlimit 64mb"
                               #                 not memory set aside.
                               # Optional: append ack-filter to thin redundant TCP
                               # ACKs on upload. Untested here, see the README first.
+TIN_MASK=0x7fff               # mark bits CAKE reads as the tin number:
+                              # 1 Bulk, 2 Best Effort, 3 Video, 4 Voice
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-upload "$*"; }
@@ -152,8 +157,12 @@ convert_upload() {
         log "could not read upload rate (got '$rate'), leaving UniFi shaper alone"
         return 1
     fi
-    if tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" $CAKE_OPTS; then
-        log "upload now shaped by CAKE at $rate"
+    # Try with fwmark tins first; fall back without them on older kernels.
+    if tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" \
+            $CAKE_OPTS fwmark "$TIN_MASK" 2>/dev/null; then
+        log "upload now shaped by CAKE at $rate (fwmark tins on)"
+    elif tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" $CAKE_OPTS; then
+        log "upload now shaped by CAKE at $rate (fwmark not supported)"
     else
         log "failed to apply CAKE, UniFi shaper left in place"
         return 1
@@ -224,6 +233,9 @@ cat << 'EOF' > /data/cake-download/cake-download.sh
 # Optional, off by default: put one WireGuard client tunnel into CAKE's
 # Bulk tin, so bulk downloads through it give way to everything else.
 # Set WG_IF to the tunnel's interface name (wg show) to turn it on.
+# It also turns on RPS for the tunnel, so decrypted traffic is spread over
+# CPUs 1-3 instead of staying on the core that decrypted it. The tunnel
+# resets RPS whenever it is recreated, so the script re-applies it.
 #   - A mangle rule marks the tunnel's own UDP connection in conntrack.
 #   - UniFi's ingress hook restores that connmark onto each download
 #     packet before redirecting it to the ifb device.
@@ -241,11 +253,13 @@ cat << 'EOF' > /data/cake-download/cake-download.sh
 
 WAN_IF="eth4"                 # WAN port (check with: ip -br addr)
 IFB_IF="ifb${WAN_IF}"         # device UniFi redirects download traffic to
-WG_IF=""                      # optional WireGuard client tunnel for Bulk,
-                              # e.g. "wgclt2". Empty = feature off.
+WG_IF=""                      # optional WireGuard client tunnel for Bulk
+                              # and RPS, e.g. "wgclt2". Empty = feature off.
+WG_RPS=e                      # RPS CPU mask for the tunnel (CPUs 1-3, the
+                              # same mask UniFi uses on its own interfaces)
 BULK_TIN=1                    # fwmark tin number for that tunnel (1 = Bulk)
 TIN_MASK=0x7fff               # mark bits CAKE reads as the tin number
-CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 96mb"
+CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 128mb"
                               # nat           = see LAN addresses behind NAT
                               # ethernet      = frame overhead, same as upload
                               # diffserv4     = Bulk, Best Effort, Video, Voice
@@ -256,8 +270,9 @@ CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 96m
                               #                 A 64 KB lump is about 0.9 ms at
                               #                 570 Mbit, and splitting them is
                               #                 a large share of CAKE's CPU cost
-                              # memlimit 96mb = queue memory cap. A ceiling,
-                              #                 not memory set aside.
+                              # memlimit 128mb = queue memory cap, sized for
+                              #                 many concurrent connections.
+                              #                 A ceiling, not memory set aside.
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-download "$*"; }
@@ -304,8 +319,19 @@ ensure_bulk_mark() {
     fi
 }
 
+# Spread the tunnel's decrypted traffic across cores.
+ensure_wg_rps() {
+    [ -n "$WG_IF" ] || return 0                  # feature off
+    local f=/sys/class/net/$WG_IF/queues/rx-0/rps_cpus
+    [ -w "$f" ] || return 0                      # tunnel down
+    if [ "$(cat "$f")" != "$WG_RPS" ]; then
+        echo "$WG_RPS" > "$f" && log "RPS on $WG_IF set to $WG_RPS"
+    fi
+}
+
 while true; do
     ensure_bulk_mark
+    ensure_wg_rps
     case "$(root_kind)" in
         htb)  convert_download ;;   # UniFi just (re)applied its shaper
         cake) : ;;                  # already converted, nothing to do
@@ -337,11 +363,11 @@ systemctl daemon-reload && systemctl enable --now cake-download
 
 Notes on the options:
 
-- **`memlimit`.** On the tested unit, UniFi's download fq_codel ran with a 4 MB memory limit. GRO merges incoming packets into lumps of up to about 64 KB (`maxpacket 69876` was recorded), so the 4 MB filled long before the 2000-packet limit did: 87,035 of 139,069 download drops were `drop_overmemory`, not normal queue management. `memlimit` is a ceiling, not memory set aside. 96 MB holds about 1.3 s of traffic at 570 Mbit, far more than CAKE lets build, so the cap should never be what drops a packet. Upload gets 64 MB for the same reason (CAKE's default at 57 Mbit is 4 MB).
+- **`memlimit`.** On the tested unit, UniFi's download fq_codel ran with a 4 MB memory limit. GRO merges incoming packets into lumps of up to about 64 KB (`maxpacket 69876` was recorded), so the 4 MB filled long before the 2000-packet limit did: 87,035 of 139,069 download drops were `drop_overmemory`, not normal queue management. `memlimit` is a ceiling, not memory set aside. 128 MB holds about 1.8 s of traffic at 570 Mbit, far more than CAKE lets build, and leaves room for bursts across many concurrent connections, so the cap should never be what drops a packet. Upload gets 64 MB for the same reason (CAKE's default at 57 Mbit is 4 MB).
 - **`no-split-gso`.** CAKE normally splits those GRO lumps back into ~1500-byte packets, which multiplies its per-packet work at download rates. Keeping them whole costs at most one lump of serialisation, about 0.9 ms at 570 Mbit. That figure is arithmetic, not a measurement.
 - **`dual-dsthost` and `nat`.** Per-device fairness on download. `nat` lets CAKE look up the LAN address behind NAT on the ifb device.
 - **`ingress`.** CAKE's download mode, which counts dropped packets against the rate.
-- **`fwmark 0x7fff`.** Lets a connection mark pick the CAKE tin. The script tries it first and falls back without it if the kernel refuses. It worked on firmware 6.0.17.
+- **`fwmark 0x7fff`.** Lets a mark pick the CAKE tin. Both scripts try it first and fall back without it if the kernel refuses. It worked on firmware 6.0.17. On both directions, UniFi's DPI priority-app mark (`0x8004`) lands in Voice.
 
 ### Optional: a WireGuard tunnel in the Bulk tin
 
@@ -364,7 +390,7 @@ journalctl -t cake-upload
 journalctl -t cake-download
 ```
 
-Expected: `upload now shaped by CAKE at 57Mbit` and `download now shaped by CAKE at 570Mbit (fwmark tins on)` (your rates). With `WG_IF` set there is also a `bulk connmark rule added` line.
+Expected: `upload now shaped by CAKE at 57Mbit (fwmark tins on)` and `download now shaped by CAKE at 570Mbit (fwmark tins on)` (your rates). With `WG_IF` set there is also a `bulk connmark rule added` line.
 
 **2. Check both directions:**
 
@@ -377,10 +403,10 @@ tc qdisc show dev ifbeth4
 Expected, as seen on the tested unit with both halves installed:
 
 ```
-qdisc cake 800a: root refcnt 5 bandwidth 57Mbit diffserv4 triple-isolate nat nowash no-ack-filter split-gso rtt 100ms noatm overhead 38 mpu 84 memlimit 64Mb
+qdisc cake 800a: root refcnt 5 bandwidth 57Mbit diffserv4 triple-isolate nat nowash no-ack-filter split-gso rtt 100ms noatm overhead 38 mpu 84 memlimit 64Mb fwmark 0x7fff
 qdisc ingress ffff: parent ffff:fff1 ----------------
         action order 2: mirred (Egress Redirect to device ifbeth4) stolen
-qdisc cake 800b: root refcnt 2 bandwidth 570Mbit diffserv4 dual-dsthost nat nowash ingress no-ack-filter no-split-gso rtt 100ms noatm overhead 38 mpu 84 memlimit 96Mb fwmark 0x7fff
+qdisc cake 800b: root refcnt 2 bandwidth 570Mbit diffserv4 dual-dsthost nat nowash ingress no-ack-filter no-split-gso rtt 100ms noatm overhead 38 mpu 84 memlimit 128Mb fwmark 0x7fff
 ```
 
 With upload only, `ifbeth4` still shows UniFi's `qdisc htb 1: root` with two `fq_codel` leaves.
@@ -578,7 +604,7 @@ The ataraxia.fyi write-up reports that Smart Queues caps a UDM Pro at about 600 
 ### Limits
 
 - **Unsupported.** Ubiquiti can change the Smart Queues layout in any firmware release. If the HTB root class moves or is renamed, the script stops converting and logs why. Stock shaping carries on.
-- **UniFi's priority lane is replaced.** The stock shapers have a small high-priority class (`1:4`), fed by UniFi's DPI marking certain apps with `0x8004`. On download, `fwmark` maps that mark to CAKE's Voice tin. On upload, CAKE picks tins from DSCP alone, so UniFi's app priority does not carry over there. Which apps UniFi marks was not investigated.
+- **UniFi's priority lane is replaced.** The stock shapers have a small high-priority class (`1:4`), fed by UniFi's DPI marking certain apps with `0x8004`. Both scripts use `fwmark`, which maps that mark to CAKE's Voice tin. On upload the mark is set by a `POSTROUTING` rule before the packet reaches CAKE. The rule had marked about 17,000 packets since boot, but none during testing, so the Voice tin was not seen picking them up. Which apps UniFi marks was not investigated.
 - **Up to a minute of stock shaping.** After a boot or any change that makes UniFi rebuild its shapers, each direction runs on HTB + fq_codel until its script's next check.
 - **One WAN.** Only the interface named in `WAN_IF` is converted, in each script. A second WAN keeps stock Smart Queues.
 - **Download CPU.** Download shaping, stock or CAKE, keeps every download packet on the CPU and out of the hardware offload. See the headroom section.

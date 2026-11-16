@@ -9,6 +9,9 @@
 #     1. reads the upload rate UniFi configured,
 #     2. replaces that upload shaper with CAKE at the same rate.
 #   If CAKE is already in place it changes nothing.
+#   With fwmark, UniFi's own priority-app mark (0x8004, set by its DPI on
+#   traffic leaving the WAN) puts those apps in CAKE's Voice tin, the same
+#   as on download. Everything else is sorted into tins by DSCP.
 #   Download is handled separately by cake-download.sh. Without it, UniFi
 #   keeps shaping download with HTB + fq_codel on the ifb device.
 #
@@ -28,6 +31,8 @@ CAKE_OPTS="nat ethernet diffserv4 memlimit 64mb"
                               #                 not memory set aside.
                               # Optional: append ack-filter to thin redundant TCP
                               # ACKs on upload. Untested here, see the README first.
+TIN_MASK=0x7fff               # mark bits CAKE reads as the tin number:
+                              # 1 Bulk, 2 Best Effort, 3 Video, 4 Voice
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-upload "$*"; }
@@ -55,8 +60,12 @@ convert_upload() {
         log "could not read upload rate (got '$rate'), leaving UniFi shaper alone"
         return 1
     fi
-    if tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" $CAKE_OPTS; then
-        log "upload now shaped by CAKE at $rate"
+    # Try with fwmark tins first; fall back without them on older kernels.
+    if tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" \
+            $CAKE_OPTS fwmark "$TIN_MASK" 2>/dev/null; then
+        log "upload now shaped by CAKE at $rate (fwmark tins on)"
+    elif tc qdisc replace dev "$WAN_IF" root cake bandwidth "$rate" $CAKE_OPTS; then
+        log "upload now shaped by CAKE at $rate (fwmark not supported)"
     else
         log "failed to apply CAKE, UniFi shaper left in place"
         return 1

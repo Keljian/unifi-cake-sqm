@@ -14,6 +14,9 @@
 # Optional, off by default: put one WireGuard client tunnel into CAKE's
 # Bulk tin, so bulk downloads through it give way to everything else.
 # Set WG_IF to the tunnel's interface name (wg show) to turn it on.
+# It also turns on RPS for the tunnel, so decrypted traffic is spread over
+# CPUs 1-3 instead of staying on the core that decrypted it. The tunnel
+# resets RPS whenever it is recreated, so the script re-applies it.
 #   - A mangle rule marks the tunnel's own UDP connection in conntrack.
 #   - UniFi's ingress hook restores that connmark onto each download
 #     packet before redirecting it to the ifb device.
@@ -31,11 +34,13 @@
 
 WAN_IF="eth4"                 # WAN port (check with: ip -br addr)
 IFB_IF="ifb${WAN_IF}"         # device UniFi redirects download traffic to
-WG_IF=""                      # optional WireGuard client tunnel for Bulk,
-                              # e.g. "wgclt2". Empty = feature off.
+WG_IF=""                      # optional WireGuard client tunnel for Bulk
+                              # and RPS, e.g. "wgclt2". Empty = feature off.
+WG_RPS=e                      # RPS CPU mask for the tunnel (CPUs 1-3, the
+                              # same mask UniFi uses on its own interfaces)
 BULK_TIN=1                    # fwmark tin number for that tunnel (1 = Bulk)
 TIN_MASK=0x7fff               # mark bits CAKE reads as the tin number
-CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 96mb"
+CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 128mb"
                               # nat           = see LAN addresses behind NAT
                               # ethernet      = frame overhead, same as upload
                               # diffserv4     = Bulk, Best Effort, Video, Voice
@@ -46,8 +51,9 @@ CAKE_OPTS="nat ethernet diffserv4 dual-dsthost ingress no-split-gso memlimit 96m
                               #                 A 64 KB lump is about 0.9 ms at
                               #                 570 Mbit, and splitting them is
                               #                 a large share of CAKE's CPU cost
-                              # memlimit 96mb = queue memory cap. A ceiling,
-                              #                 not memory set aside.
+                              # memlimit 128mb = queue memory cap, sized for
+                              #                 many concurrent connections.
+                              #                 A ceiling, not memory set aside.
 CHECK_EVERY=60                # seconds between checks
 
 log() { logger -t cake-download "$*"; }
@@ -94,8 +100,19 @@ ensure_bulk_mark() {
     fi
 }
 
+# Spread the tunnel's decrypted traffic across cores.
+ensure_wg_rps() {
+    [ -n "$WG_IF" ] || return 0                  # feature off
+    local f=/sys/class/net/$WG_IF/queues/rx-0/rps_cpus
+    [ -w "$f" ] || return 0                      # tunnel down
+    if [ "$(cat "$f")" != "$WG_RPS" ]; then
+        echo "$WG_RPS" > "$f" && log "RPS on $WG_IF set to $WG_RPS"
+    fi
+}
+
 while true; do
     ensure_bulk_mark
+    ensure_wg_rps
     case "$(root_kind)" in
         htb)  convert_download ;;   # UniFi just (re)applied its shaper
         cake) : ;;                  # already converted, nothing to do
