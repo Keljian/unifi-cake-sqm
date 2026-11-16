@@ -184,7 +184,7 @@ systemctl daemon-reload && systemctl enable --now cake-upload
 
 Notes on the design:
 
-- **A loop, not a timer.** One long-running service that sleeps 60 seconds between checks writes nothing to the journal unless it changes something. A systemd timer would log a start and finish line every minute.
+- **A loop** One long-running service that sleeps 60 seconds between checks writes nothing to the journal unless it changes something. A systemd timer would log a start and finish line every minute.
 - **`/bin/bash` in `ExecStart`.** This runs the script without relying on execute permission under `/data`.
 - **Same logic as the original install.** The script first installed on the tested unit also removed download shaping. That was switched off afterwards with `sed`, leaving an unused function in the file. The version above is the same behaviour with that function taken out. Running this install block over the top replaces it cleanly.
 
